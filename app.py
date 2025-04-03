@@ -1,48 +1,57 @@
-import streamlit as st
-import requests
+from flask import Flask, request, jsonify
+import pandas as pd
+import joblib
+from sklearn.preprocessing import StandardScaler
 
-# API URL
-API_URL = "http://localhost:5000/predict"  # Change to your ngrok URL when deploying
+# Load the trained model (ensure the model is saved as 'credit_model.pkl')
+model = joblib.load('random_forest_model.pkl')  # Replace with your model path
 
-# UI Elements
-st.title("Credit Score Prediction")
+# Create a Flask app
+app = Flask(__name__)
 
-st.write("Enter the details of the borrower:")
+# Load scaler if necessary (if you used scaling during training)
+scaler = joblib.load('scaler.pkl')  # Replace with the actual scaler file, if applicable
 
-# Create form fields
-revolving_utilization = st.number_input("Revolving Utilization of Unsecured Lines (%)", min_value=0.0, max_value=1.0)
-age = st.number_input("Age", min_value=18, max_value=100)
-debt_ratio = st.number_input("Debt Ratio (%)", min_value=0.0, max_value=1.0)
-monthly_income = st.number_input("Monthly Income ($)", min_value=0)
-open_credit_lines = st.number_input("Number of Open Credit Lines and Loans", min_value=0)
-time_30_59_days = st.number_input("Number of times 30-59 days late in last 2 years", min_value=0)
-time_60_89_days = st.number_input("Number of times 60-89 days late in last 2 years", min_value=0)
-time_90_days = st.number_input("Number of times 90+ days late in last 2 years", min_value=0)
-real_estate_loans = st.number_input("Number of Real Estate Loans or Lines", min_value=0)
-dependents = st.number_input("Number of Dependents", min_value=0)
+# Function to process input data (convert to DataFrame for prediction)
+def process_input(data):
+    # Convert the input into a DataFrame (this is necessary for model prediction)
+    input_data = pd.DataFrame([data])
+    
+    # Optionally: Scale the features if you scaled them during training
+    input_data_scaled = scaler.transform(input_data)
+    
+    return input_data_scaled
 
-# Create a button to trigger the prediction
-if st.button('Predict Credit Score'):
-    # Gather data in dictionary format
-    input_data = {
-        "RevolvingUtilizationOfUnsecuredLines": revolving_utilization,
-        "age": age,
-        "NumberOfTime30-59DaysPastDueNotWorse": time_30_59_days,
-        "DebtRatio": debt_ratio,
-        "MonthlyIncome": monthly_income,
-        "NumberOfOpenCreditLinesAndLoans": open_credit_lines,
-        "NumberOfTimes90DaysLate": time_90_days,
-        "NumberRealEstateLoansOrLines": real_estate_loans,
-        "NumberOfTime60-89DaysPastDueNotWorse": time_60_89_days,
-        "NumberOfDependents": dependents
-    }
+@app.route('/predict', methods=['POST'])
+def predict_credit_score():
+    try:
+        # Get the data from the POST request
+        data = request.get_json()
 
-    # Send the data to the Flask API for prediction
-    response = requests.post(API_URL, json=input_data)
+        # Validate if the required fields are present in the input
+        required_fields = [
+            'RevolvingUtilizationOfUnsecuredLines', 'age', 'NumberOfTime30-59DaysPastDueNotWorse', 
+            'DebtRatio', 'MonthlyIncome', 'NumberOfOpenCreditLinesAndLoans', 'NumberOfTimes90DaysLate', 
+            'NumberRealEstateLoansOrLines', 'NumberOfTime60-89DaysPastDueNotWorse', 'NumberOfDependents'
+        ]
+        
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
 
-    if response.status_code == 200:
-        # Parse and display the result
-        result = response.json()
-        st.success(f"{'The borrower would not default' if result['credit_score'] == 0 else 'The borrower is likely to default on the loan.'}")
-    else:
-        st.error("Error: " + response.json().get('error', 'Something went wrong'))
+        # Process the input data
+        processed_data = process_input(data)
+        
+        # Make prediction
+        prediction = model.predict(processed_data)
+
+        # Return the prediction as a JSON response
+        result = {"credit_score": int(prediction[0])}
+        return jsonify(result)
+    
+    except Exception as e:
+        # Handle unexpected errors
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
